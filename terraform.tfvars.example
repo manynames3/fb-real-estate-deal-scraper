@@ -1,0 +1,8 @@
+# Copy this file to terraform.tfvars and fill in your values
+# NEVER commit terraform.tfvars to GitHub
+
+scrapecreators_api_key = "your_scrapecreators_api_key_here"
+alert_email            = "your_email_here@example.com"
+
+# Optional — default is already set to your 5 groups
+# fb_group_urls = "https://www.facebook.com/groups/..."
