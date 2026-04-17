@@ -1,0 +1,19 @@
+# Terraform
+.terraform/
+.terraform.lock.hcl
+terraform.tfstate
+terraform.tfstate.backup
+terraform.tfstate.d/
+terraform.tfvars
+
+# Lambda build artifacts
+lambda_function.zip
+requests-layer.zip
+python/
+
+# Environment
+.env
+.env.*
+
+# Mac
+.DS_Store
