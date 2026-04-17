@@ -1,197 +1,197 @@
-# AWS FB Deal Finder
+# FB Deal Finder — Automated Real Estate Deal Scout
+### Clearpath Property Group | Built on AWS
 
-An event-driven AWS pipeline that monitors Facebook real estate groups, detects motivated-seller signals, deduplicates posts, and sends real-time alerts.
+An automated AWS pipeline that monitors public Facebook real estate groups for motivated seller posts, filters them using keyword scoring, deduplicates results, and delivers email alerts in real time.
 
-This project is designed as a lightweight serverless workflow for lead discovery. It uses AWS Lambda, EventBridge, DynamoDB, and SNS to poll an external data source on a schedule, score new posts against acquisition keywords, and notify the operator when a potentially valuable lead appears.
+Built as a practical lead generation tool for real estate wholesaling and as a hands-on AWS portfolio project covering Lambda, DynamoDB, SNS, EventBridge, IAM, and CloudWatch.
 
-## Why this project exists
+![Lambda test success](docs/screenshots/21-lambda-test-success.png)
 
-Real estate investor communities generate a steady stream of posts, but the useful ones are buried in noise and disappear quickly. This project automates the first-pass screening process so new opportunities can be surfaced quickly without manually checking multiple groups throughout the day.
+## What It Does
 
-## What it does
-
-- Fetches recent posts from configured Facebook groups on a recurring schedule
-- Scans post text for motivated-seller and distress keywords
-- Deduplicates previously seen posts using DynamoDB
-- Sends real-time alerts through Amazon SNS
-- Automatically expires old post records using DynamoDB TTL
-- Keeps monthly operating cost low by relying on serverless components
+- Calls the ScrapeCreators API on a schedule to pull new posts from 5 public Atlanta-area real estate Facebook groups
+- Scores each post against a curated list of motivated seller keywords like `motivated`, `as-is`, `inherited`, `probate`, `vacant`, and `off market`
+- Filters out retail and realtor listings using a negative keyword list like `just listed`, `realtor`, `keller williams`, and `mls#`
+- Checks DynamoDB to skip posts already seen so you do not get duplicate alerts
+- Sends an email alert via SNS with the post text, author, keywords matched, and a direct link to the Facebook post
+- Automatically deletes seen posts from DynamoDB after 30 days via TTL
 
 ## Architecture
 
 ```text
 ScrapeCreators API
-        |
-        v
-EventBridge schedule (every 4 hours)
-        |
-        v
-AWS Lambda (Python)
-  - fetch posts for each group
-  - score posts by keyword match
-  - check DynamoDB for duplicates
-  - persist unseen posts
-  - publish alert for matches
-        |
-        +--> DynamoDB (seen posts + TTL)
-        |
-        +--> SNS (email / SMS alerts)
+(fetches 3 posts per FB group per call)
+        ↓
+EventBridge Scheduler
+(triggers Lambda every 3 days at 11 PM ET)
+        ↓
+Lambda Function (Python 3.12)
+  → calls ScrapeCreators for each group
+  → scores posts against DEAL_KEYWORDS
+  → filters against NEGATIVE_KEYWORDS
+  → checks DynamoDB: already seen? skip
+  → saves new matching posts to DynamoDB
+  → publishes SNS alert for each match
+        ↓
+SNS Topic → Email alert to you
+        ↓
+DynamoDB
+(stores seen post IDs with 30-day TTL)
+        ↓
+CloudWatch Logs
+(full execution logs per run)
 ```
 
-## AWS services used
+## AWS Services Used
 
-### AWS Lambda
-Runs the scheduled Python job that handles ingestion, filtering, deduplication, and alerting.
+| Service | Purpose |
+|---------|---------|
+| **Lambda** | Core scraper and keyword filter logic |
+| **DynamoDB** | Deduplication store with TTL auto-cleanup |
+| **SNS** | Email alert delivery |
+| **EventBridge Scheduler** | Cron trigger every 3 days at 11 PM ET |
+| **IAM** | Least-privilege roles for Lambda and EventBridge |
+| **CloudWatch Logs** | Execution logging and monitoring |
 
-### Amazon EventBridge
-Triggers the Lambda function every 4 hours.
+## Target Facebook Groups
 
-### Amazon DynamoDB
-Stores post identifiers so the same post is not alerted twice. TTL is used to remove old records automatically.
+| Group | URL |
+|-------|-----|
+| Atlanta Real Estate Wholesalers | `/groups/atlant.realestate.wholesalers` |
+| GA Off Market Properties | `/groups/georgiaoffmarketproperties` |
+| Atlanta GA Real Estate Investing | `/groups/atlanta.ga.real.estate.investing` |
+| Group 353876517547400 | `/groups/353876517547400` |
+| Group 364263283590058 | `/groups/364263283590058` |
 
-### Amazon SNS
-Sends notifications by email and SMS when a new post matches one or more deal keywords.
+## Deal Keywords
 
-## Processing flow
+**Positive keywords**
 
-1. EventBridge invokes the Lambda function on a fixed schedule.
-2. Lambda requests recent posts from the configured source for each group URL.
-3. Each post is normalized into a deterministic post ID.
-4. The post text is matched against a keyword library.
-5. If the post has no relevant signals, it is ignored.
-6. If the post was already processed, it is skipped.
-7. If the post is new and relevant, it is written to DynamoDB and an alert is published through SNS.
+`must sell`, `need to sell`, `motivated`, `as-is`, `inherited`, `estate sale`, `probate`, `foreclosure`, `pre-foreclosure`, `divorce`, `vacant`, `abandoned`, `fixer upper`, `tlc`, `off market`, `wholesale`, `fsbo`, `below market`, `cash only`
 
-## Keyword strategy
+**Negative keywords**
 
-The scoring model is intentionally simple and transparent. Instead of using a black-box classifier, the project starts with a curated keyword set covering:
+`just listed`, `new listing`, `mls#`, `listing price`, `days on market`, `realtor`, `real estate agent`, `keller williams`, `re/max`, `coldwell banker`, `exp realty`, `looking to buy`, `investor looking`, `bird dog`
 
-- motivated seller language
-- distress indicators
-- property-condition signals
-- wholesale and off-market terms
-- target-market geography
+## Cost
 
-This makes it easy to tune the system for new markets or acquisition strategies.
+| Service | Cost |
+|---------|------|
+| ScrapeCreators (5,000 credits) | $10 for roughly 2+ years at current schedule |
+| Lambda | $0 under free tier |
+| DynamoDB | $0 under free tier |
+| EventBridge | $0 under free tier |
+| SNS Email | $0 under free tier |
+| **Total** | **About $0-2 per month** |
 
-## Deduplication design
-
-To avoid duplicate alerts, each post is assigned a stable ID derived from the best available identifier from the source payload, such as:
-
-- post ID
-- post URL
-- truncated post text fallback
-
-That value is hashed and stored in DynamoDB. If the hash already exists, the alert is skipped.
-
-## Example alert payload
-
-```text
-DEAL ALERT
-
-BY: Jane Seller
-DATE: 2026-04-17
-
-POST:
-Inherited property in Gwinnett County. Needs work and looking for a cash buyer.
-
-KEYWORDS:
-inherited, needs work, cash buyer, gwinnett
-
-LINK:
-https://example.com/post/123
-```
-
-## Cost profile
-
-The system is intentionally low-cost.
-
-- Lambda: typically covered by free tier at this usage level
-- DynamoDB: minimal storage and read/write usage
-- EventBridge: negligible scheduler cost at low volume
-- SNS Email: typically free
-- SNS SMS: variable, depending on alert volume
-- External scraping API: primary paid component
-
-This makes the design practical for solo operators, small internal tools, or low-volume lead pipelines.
-
-## Security notes
-
-This repository does **not** store production secrets.
-
-### Keep out of source control
-
-- API keys
-- AWS account-specific ARNs
-- real phone numbers
-- real email endpoints
-- private source URLs if they expose business strategy
-
-### Recommended secret handling
-
-- Lambda environment variables for basic deployments
-- AWS Secrets Manager or Parameter Store for stronger production hygiene
-- least-privilege IAM permissions instead of broad admin policies
-
-## Repository contents
+## Project Structure
 
 ```text
 .
-├── README.md
-├── src/
-│   └── lambda_function.py
-├── tests/
-├── examples/
-│   ├── sample_post.json
-│   ├── sample_alert.txt
-│   └── sample_dynamodb_item.json
+├── lambda_function.py
+├── main.tf
+├── terraform.tfvars.example
 ├── docs/
-│   └── architecture.md
-├── infra/
-│   └── terraform/ or cdk/
-├── .env.example
-└── SECURITY.md
+│   ├── manual-setup.md
+│   └── screenshots/
+└── README.md
 ```
 
-## Local development
+## Documentation
 
-Use placeholder values locally and never commit real credentials.
+- Full AWS console walkthrough with screenshots: [docs/manual-setup.md](docs/manual-setup.md)
+- Infrastructure deployment option: Terraform via `main.tf`
 
-Example environment variables:
+## Quick Deploy With Terraform
+
+### Prerequisites
+
+- [Terraform](https://developer.hashicorp.com/terraform/install)
+- AWS CLI configured with `aws configure`
+- A [ScrapeCreators](https://scrapecreators.com) account and API key
+
+### 1. Build the requests Lambda layer
 
 ```bash
-SCRAPECREATORS_API_KEY=your_api_key_here
-FB_GROUP_URLS=https://www.facebook.com/groups/example1,https://www.facebook.com/groups/example2
-SNS_TOPIC_ARN=arn:aws:sns:us-east-1:123456789012:deal-alerts
-DYNAMODB_TABLE=fb-deal-posts
-AWS_REGION=us-east-1
+mkdir python
+pip3 install requests -t python/
+zip -r requests-layer.zip python/
 ```
 
-## Production improvements
+Place `requests-layer.zip` in the same folder as `main.tf`.
 
-The current design is a solid MVP. Strong next steps include:
+### 2. Set variables
 
-- Infrastructure as Code with Terraform or AWS CDK
-- unit tests for keyword scoring and dedup logic
-- structured logging and metrics
-- dead-letter queue handling
-- alert throttling or daily digest mode
-- web dashboard for reviewing archived leads
-- AI-based lead scoring for higher precision
+```bash
+cp terraform.tfvars.example terraform.tfvars
+```
 
-## Resume / portfolio value
+Then fill in:
 
-This project demonstrates:
+```hcl
+scrapecreators_api_key = "your_key_here"
+alert_email            = "you@example.com"
+```
 
-- serverless architecture on AWS
-- event-driven design
-- external API integration
-- deduplication and idempotency patterns
-- NoSQL persistence with TTL lifecycle management
-- notification workflows
-- cost-aware cloud design
-- security-conscious handling of configuration and secrets
+Do not commit `terraform.tfvars`.
 
-## Notes
+### 3. Deploy
 
-This repository is intended to show the engineering design and implementation pattern behind the system. Any deployment-specific values should be redacted or replaced with placeholders before publication.
+```bash
+terraform init
+terraform plan
+terraform apply
+```
+
+### 4. Confirm the SNS email subscription
+
+AWS sends a confirmation email before alerts begin.
+
+## Validation
+
+After deployment, you should be able to verify all three outcomes:
+
+- Lambda test runs successfully
+- SNS emails arrive in your inbox
+- DynamoDB stores deduplicated post records
+
+| Lambda Test | Email Alerts |
+|---|---|
+| ![Lambda test](docs/screenshots/21-lambda-test-success.png) | ![Email alerts](docs/screenshots/22-email-alerts-received.png) |
+
+| DynamoDB Items | CloudWatch Logs |
+|---|---|
+| ![DynamoDB items](docs/screenshots/23-dynamodb-items-stored.png) | ![CloudWatch logs](docs/screenshots/24-cloudwatch-logs.png) |
+
+## Environment Variables
+
+| Variable | Description |
+|----------|-------------|
+| `SCRAPECREATORS_API_KEY` | API key from ScrapeCreators |
+| `FB_GROUP_URLS` | Comma-separated Facebook group URLs |
+| `SNS_TOPIC_ARN` | SNS topic ARN for alerts |
+| `DYNAMODB_TABLE` | DynamoDB table name, usually `fb-deal-posts` |
+
+All sensitive values live in Lambda environment variables rather than source code.
+
+## Extending This Project
+
+| Extension | Description |
+|-----------|-------------|
+| **SES Daily Digest** | Replace per-post SNS alerts with one nightly summary |
+| **API Gateway + React** | Add a web dashboard to review and track leads |
+| **Bedrock / Claude API** | Add AI-based lead scoring and reasoning |
+| **S3 Archive** | Save all scraped posts as JSON for later analysis |
+
+## Security
+
+- Credentials are stored in Lambda environment variables only
+- `terraform.tfvars` is gitignored
+- AWS account ID is fetched dynamically via `data.aws_caller_identity`
+- IAM roles can be narrowed beyond the current broad managed policies for production use
+
+## About
+
+Built for **Clearpath Property Group**, a real estate wholesaling operation in the Atlanta and Gwinnett County, Georgia area.
+
+This project also serves as a portfolio-ready AWS case study aligned with topics covered on the AWS Solutions Architect Associate exam.
